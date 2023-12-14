@@ -1,0 +1,77 @@
+6버전으로 실행이 잘 안되어 일단, 4.2.24 버전으로 확인완료
+(4.4.20 명령어가 있긴함.) 실행됨.
+(5.0.16 명령어가 있긴함.)x 안됨.
+
+준비물
+ms store -> 터미널
+
+연습하기.
+각 구역 폴더 만들기. 
+
+mkdir c:\db\data\rs0-0
+mkdir c:\db\data\rs0-1
+mkdir c:\db\data\rs0-2
+
+	1. C:/db/data/rs0-0
+	2. C:/db/data/rs0-1
+	3. C:/db/data/rs0-2
+
+명령어 창1
+mongod --replSet rs0 --port 27018 --bind_ip localhost --dbpath /db/data/rs0-0
+
+명령어 창2
+mongod --replSet rs0 --port 27019 --bind_ip localhost --dbpath /db/data/rs0-1
+
+명령어 창3
+mongod --replSet rs0 --port 27020 --bind_ip localhost --dbpath /db/data/rs0-2
+
+명령어 창4 여기서 새로 접속 -> 총 명령어창 4개.
+mongo --port 27018
+
+rs.initiate(
+{
+_id : "rs0",
+members: [
+{_id:0, host:"localhost:27018"},
+{_id:1, host:"localhost:27019"},
+{_id:2, host:"localhost:27020"}
+]
+}
+)
+
+조회 
+	- rs.status()
+복제세트 상세정보 조회.
+간단 조회: db.isMaster()
+
+프라이머리에 접속 후(명령어창 4번째에서 계속 작업.)
+-exit 
+몽고디비 서버 접속 명령어
+-mongo --port 27019 
+-db.replicationTest.insertOne({hello: 'world'})
+세커더리에 접속 해서 
+-db.replicationTest.find()
+
+에러 발생 기본값으로 세컨더리에서 몽고디비 셸 사용 못하게 설정되어 있음.
+rs.slaveOk()
+
+윈도우 환경 설정 파일 
+설치된 디렉터리 /bin/mongod.cfg 
+여기서 접속 허용할 ip 등 옵션 설정.
+
+cfg = rs.conf();
+cfg.members[0].priority = 2;
+rs.reconfig(cfg);
+
+use local
+db.oplog.rs.find().limit(1).pretty()
+
+
+rs.printSlaveReplicationInfo()
+
+
+상태조회.
+rs.status()
+세컨더리에서 명령어 실행시 필요.
+rs.slaveOk()
+

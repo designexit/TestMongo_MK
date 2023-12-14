@@ -1,0 +1,1126 @@
+집계 명령어 활용하기.
+소개
+1프로젝션을 통해 존재하는 필드를 숨기거나 보일 순 있지만,
+
+2필드의 이름을 바꾸거나 구조를 바꾸어 결과를 출력할 수는 없다.
+
+또, 3컬렉션 내에 들어 있는 도큐먼트들을 그룹화하여 숫자를 세는 것이나
+
+4서로 다른 두 컬렉션의 정보를 연결해서 출력하지는 못한다.
+
+그래서, 5저장되어 있는 정보에서 다른 정보를 합해서 출력하거나,
+
+6그룹화를 통해 다른 형태로 정보를 보여주는 것을 '집계' 라 한다.
+
+실습준비
+지방자치단체별 운영비 사용 내역.
+
+디비 구조.
+1 population 컬렉션
+각 지방자치단체가 담당하는 주민등록상의 인구정보를 포함하고 있음.
+필드
+1)city_or_province
+1차 지역명. 시,도 와 같은 광역단체명
+2)local_government
+2차 지역명. 시, 군, 구와 같은 이름이 들어감.
+3) population
+해당 지역의 주민등록상 인구수를 의미.
+
+2 local 컬렉션
+본청을 제외한 2차 지역의 지방자치 단체의 운영비 정보.
+1) city_or_province, local_government , 동일
+2) main_category
+예산 항목의 대분류
+3) sub_category
+예산 항목의 소분류
+4) this_term_expense
+올해 지출 비용
+5) former_expense
+작년 지출 비용
+
+3 city_or_province 컬렉션
+1차 지역의 지방자치 단체의 운영비 정보.
+
+4.1 집계 전략 어떻게-> 정보를 -> 그룹화 -> 평균, 카운트
+평점, 누가 몇점을 주었는지 미리 저장되어야함.
+점수 집계를 위해서는 각각 도큐먼트들 사이에서
+점수를 그룹화하거나, 합산해야 함.
+이 작업은 쿼리 명령어로 수행 못함.
+쿼리는 특정 도큐먼트들을 불러오는데 적합.
+불러온 정보를 이후에 가공하는 작업은 수행 못함.
+이런 작업은 집계 관련 명령어를 통해 수행.
+
+-집계방법과 효율성
+방법 3가지
+:데이터 집계 가공은 , 디비영역에서 다처리하고, 백으로 전달 해주세요.
+예) 스프링 , JPA ORM , Repostiroy, Qdomain , 명령어 -> DB 
+
+1) 데이터베이스의 모든 정보를 불러와 애플리케이션 단계에서 집계
+-> 예 ) MySQL 일단, select 다 가져와서, 
+백) 스프링에서, 집계를 , 
+장점) 가공 하기가 쉽다. 
+단점) 스프링에 해당 데이터를 모두 불러와서처 처리하니 , 메모리 사용량이 급격히 증가. 
+임시로 담을 공간도 필요하고, 연산해서 처리할 때 공간이 필요하고, 
+
+2) 몽고디비의 맵 리듀스의 기능 이용. -> deprecated
+-> 
+3) 몽고디비의 집계 파이프라인 기능 이용. -> 권장.
+-> 스프링, MySQL(여기서, 필터, 연산이나 데이터 미리 다 가공한다.)
+-> 스프링에 전달함.(최대한 백에서는 따로 연산등을 안하게끔.)
+예) 1차 웹 프로젝트 구조. 
+뷰(jsp 또는 타임리프) - 백(스프링, 부트기반, 디비: JPA, 또는 마이바티스)
+데이터베이스를 최대한 가공해서, 백에 전달. !!
+2차 
+예) 
+앞단 (안드로이드 앱) - 백(스프링)- 디비(MySQL, 파이어베이스)
+데이터베이스를 최대한 가공해서, 백에 전달. !!
+
+
+-> 정보를 최대한 작게 만든 후에 애플리케이션으로 작아진 정보를 전송이
+효율적.
+
+- 몽고디비 아키텍처
+예) find 명령어 몽고디비에 요청했다고 가정.
+1)애플리케이션(백: 스프링, Node.js, 장고) 드라이버에서 find 명령을 몽고디비에 전달
+2)쿼리 처리기에서 스토리지 엔진에 정보를 불러오라는 명령을 보냄
+3) 스토리지 엔진은 장기 저장 장치 또는 램에서 정보를 불러옴.
+4) 이후 쿼리 처리기가 정보를 다시 받아 애플리케이션 드라이버로
+찾은 정보를 전달.
+
+-> 스토리지 엔진과 가장 가까운 곳에서 처리하는게 좋음.
+쿼리 처리기(c++로 프로그래밍 된) 집계 연산을 하는 것.
+1)언어의 연산속도도 빠르고,
+2) 정보 교환이 따로 필요 없음.
+
+- 램 메모리 관계
+몽고디비 내부에서 처리한다면 많은 양의 램 메모리가 필요 없음.
+집계 파이프라인 명령어는
+도큐먼트를 순차적으로 받아서 집계처리를 몽고디비 내부에서 함.
+상대적으로 적은 메모리로 빠른 속도 낼수 있음.
+
+4.3 집계 파이프라인 스테이지
+효율적으로 집계 연산이 가능하지만, 명령어가 조금 복잡.
+
+파이프라인?
+한 데이터 처리 단계의 출력이 다음 단계의 입력으로 이어지는 형태로
+연결된 구조.
+집계 파이프라인은 데이터를 받아서 각각의 공정을 거쳐서
+원하는 결과물이 출력되는 구조로 되어 있음.
+
+예)
+ db.rating.aggregate([
+        {
+          $match: {
+            user_id: { $lte: 6 },
+          },
+        },
+        {
+          $group: {
+            _id: "$rating",
+            count: {
+              $sum: 1,
+            },
+          },
+        },
+      ]);
+
+-> user_id 6이하 중에서
+-> _id : rating 점수별로, 누적 갯수 세기.
+
+1)집계 파이프라인은 컬렉션의 정보가 각각의 스테이지를 거치면서
+집계되는 구조.
+2) 집계 파이프라인 연산자를 통해 데이터를 가공.
+3) 이전 단계에서 출력된 도큐먼트에서 해당 필드의 값을 이용한다면
+"$필드명" 형태로 사용.
+-> match 결과로 나온 rating의 필드를
+group에서 재사용함.
+
+대표적인 몇가지 만 살펴보기.
+
+- 기본 스테이지 소개.
+
+1) $project
+어떤 필드를 숨기고, 어떤 필드를 새로 만들지 정함.
+형식
+{ $project : { <field>: <boolean>  }
+
+2) $group
+_id 값으로 지정된 내용이 같은 도큐먼트끼리 그룹화함.
+-> _id 를 기준으로 나눈다. 
+형식
+{ $group: { _id: <expression>
+, <field>: {<연산자> : <표현식>},...}
+예)
+  {
+    $group: {
+      _id: "$rating",
+      count: {
+        $sum: 1,
+      },
+    },
+  },
+
+3) $match
+도큐먼트를 필터링해서 반환한다. find(where) 문과 비슷
+형식
+{ $match : { <query> }}
+예)
+  {
+    $match: {
+      user_id: { $lte: 6 },
+    },
+  },
+
+4) $unwind -> 배열 분해 -> 각 문서로 나눈다. 
+입력 도큐먼트에서 배열 필드를 분해하여 각 요소에
+대한 도큐먼트로 분리하여 출력한다.
+형식
+{ $unwind: <field path>}
+{
+  $unwind:
+    {
+  path: <field path>,
+  includeArrayIndex: <string>,
+  preserveNullAndEmptyArrays: <boolean>
+}
+}
+예)
+{
+    $unwind: "$user_ids",
+  }, // 3번째 스테이지 , unwind 확인.
+
+예2)
+  {
+    $unwind: {
+      path: "$user_ids",
+      includeArrayIndex: "index",
+    },
+  }, // 3번째 스테이지 , unwind 확인.
+
+5) $out
+파이프라인의 결과를 컬렉션에 기록한다.
+형식
+{ $out: "<collection name>"}
+예)
+  {
+    $out: "user_ids_by_rating", //컬렉션 이름.
+  }, // out 어느 컬렉션 저장.
+
+------------------------------------------
+각 스테이지 예시 .
+1) $project
+어떤 필드를 숨기고, 어떤 필드를 새로 만들지 정함.
+형식
+{ $project : { <field>: <boolean>,... }  }
+
+예)
+1 해당 필드의 값 중에서 첫 번째 글자만을 보여줄수 있고,
+2 필드를 숨기거나 ,
+3 서로다른 필드 두개를 곱셈한 필드를 새로 만들기.
+
+예시
+db.rating.aggregate([
+  {
+    $project: {_id:0, rating:1}
+  }
+])
+-> rating 컬렉션 만 보여주고, 나머지 다 가려줘.
+
+새로운 필드 추가
+예시
+
+db.rating.aggregate([
+  {
+    $project: {_id:0, rating:1, hi:"new field"}
+  }
+])
+-> 기존의 도큐먼트에 없는 필드에 값을 넣게 되면 모든 도큐먼트에
+값이 들어가게 됨.
+
+예시
+db.rating.aggregate([
+  {
+  //multiply 새 필드를 추가함. 
+  // $multiply 함수는 [요소1,요소2]: 요소1 x 요소2
+    $project: {_id:0, multiply : {
+  $multiply : ["$_id", "$user_id"]
+}}
+  }
+])
+
+------------------------------------------------
+2) $group 중요함.
+_id 값으로 지정된 내용이 같은 도큐먼트끼리 그룹화함.
+형식
+{ $group: { _id: <expression>
+, <field>: {<연산자> : <표현식>},...}
+예)
+  {
+    $group: {
+      _id: "$rating",
+      count: {
+        $sum: 1,
+      },
+    },
+  },
+
+예시
+db.rating.aggregate([
+  {
+$group: {
+  _id: "$rating", count: {$sum: 1}
+}
+  }
+])
+-> _id 값에 그룹화의 기준이 되는 값을 설정.
+그룹화를 하면서 값을 더하거나 배열로 값을 저장하는 등의
+특별한 연산이 필요할수 있다.
+이런 연산을 하고자 할때는 필드명을 설정하고,
+값으로 다음 표에 나와있는 연산자를 사용하면 됨.
+
+표
+1) $first
+그룹의 첫번째 값을 반환. $sort 를 해야 의미가 있음.
+형식
+{ $group:
+  {_id: "$item", SalesDate: { $first: "$date"}}
+}
+2) $last
+그룹의 마지막 값을 반환. $sort 를 해야 의미가 있음.
+형식
+{ $group:
+  {_id: "$item", SalesDate: { $last: "$date"}}
+}
+
+3) $max
+그룹의 해당 필드의 최대값을 반환.
+형식
+{ $group:
+  {_id: "$item", SalesDate: { $max: "$date"}}
+}
+
+4) $min
+그룹의 해당 필드의 최소값을 반환.
+형식
+{ $group:
+  {_id: "$item", SalesDate: { $min: "$date"}}
+}
+
+5) $avg
+그룹의 해당 필드의 평균값을 반환.
+형식
+{ $group:
+  {_id: "$item", SalesDate: { $avg: "$date"}}
+}
+
+6) $sum
+그룹의 해당 필드의 합산값을 반환.
+형식
+{ $group:
+  {_id: "$item", SalesDate: { $sum: "$date"}}
+}
+-> $sum: 1 -> 도큐먼트 하나당 1을 더하라는 의미.
+
+7) $push -> 배열로 만들기. 
+그룹에서 해당 필드의 모든값을 배열에 넣어서 반환한다.중복제거 안함.
+형식
+{ $group:
+  {_id: "$item", SalesDate: { $push: "$date"}}
+}
+
+8) $addToSet -> 중복 제거. (집합)
+그룹에서 해당 필드의 모든값을 배열에 넣어서 반환한다.중복제거 함.
+형식
+{ $group:
+  {_id: "$item", SalesDate: { $addToSet: "$date"}}
+}
+------------------------------------------
+3) $match
+도큐먼트를 필터링해서 반환한다. find(=where) 문과 비슷
+형식
+{ $match : { <query> }}
+예)
+  {
+    $match: {
+      user_id: { $lte: 6 },
+    },
+  },
+
+예시)
+  db.rating.aggregate([
+    {
+      $match: {
+        rating: {
+          $gte: 4,
+        },
+      },
+    }, //스테이지 중하나인  match : 조건
+    {
+      $group: {
+        _id: "$rating",
+        user_ids: {
+		// $push 대신에, $first, $last, $min, $max , $addToSet,
+		// $avg
+          $push: "$user_id", // 배열로 만들기.
+        },
+      },
+    },
+  ]);
+-> 평정 4 이상인 사용자의 id 들을 배열의 형태로 정리하도록 명령.
+
+----------------------------------------------
+4) $unwind: 
+$push 반대, 배열 -> 각 문서로 분해. 
+입력 도큐먼트에서 배열 필드를 분해하여 각 요소에
+대한 도큐먼트로 분리하여 출력한다.
+형식
+{ $unwind: <field path>}
+{
+  $unwind:
+    {
+  path: <field path>,
+  includeArrayIndex: <string>,
+  preserveNullAndEmptyArrays: <boolean>
+}
+}
+예)
+{
+    $unwind: "$user_ids",
+  }, // 3번째 스테이지 , unwind 확인.
+
+예2)
+  {
+    $unwind: {
+      path: "$user_ids",
+      includeArrayIndex: "index",
+    },
+  }, // 3번째 스테이지 , unwind 확인.
+
+예시
+//p158 진행중. unwind -> 배열-> 요소로 꺼내기.
+db.rating.aggregate([
+    {
+      $match: {
+        rating: {
+          $gte: 4,
+        },
+      },
+    }, //스테이지 중하나인  match : 조건, 1번째  스테이지
+    {
+      $group: {
+        _id: "$rating",
+        user_ids: {
+          $push: "$user_id", // 배열로 만들기. 2번째 스테이지.
+        },
+      },
+    },
+    {
+      $unwind: "$user_ids",
+    }, // 3번째 스테이지 , unwind 확인.
+  ]);
+
+옵션,
+만약, 도큐먼트로 분리 될 때 배열의 순서를 기록하려면 어떻게 함?
+1) includeArrayIndex
+새로 생성할 인덱스 필드의 이름을 넣으면 인덱스 필드가 생성됨.
+2) preserveNullAndEmptyArrays
+true 값으로 설정하면,
+배열의 빈 요소도 각각의 도큐먼트로 분리하게 됨.
+기본값은 false , 새로운 도큐먼트를 생성하지 않음.
+
+db.rating.aggregate([
+    {
+      $match: {
+        rating: {
+          $gte: 4,
+        },
+      },
+    }, //스테이지 중하나인  match : 조건, 1번째  스테이지
+    {
+      $group: {
+        _id: "$rating",
+        user_ids: {
+          $push: "$user_id", // 배열로 만들기. 2번째 스테이지.
+        },
+      },
+    },
+    {
+      $unwind: {
+        path: "$user_ids",
+		// 옵션 부분, 
+        includeArrayIndex: "index",
+      },
+    }, // 3번째 스테이지 , unwind 확인.
+  ]);
+
+--------------------------------------
+
+5) $out
+파이프라인의 결과를 컬렉션에 기록한다.
+형식
+{ $out: "<collection name>"}
+예)
+  {
+    $out: "user_ids_by_rating", //컬렉션 이름.
+  }, // out 어느 컬렉션 저장.
+
+  //p160 진행중. out -> 어느 컬렉션에 저장.
+db.rating.aggregate([
+    {
+      $group: {
+        _id: "$rating",
+        user_ids: {
+          $push: "$user_id", // 배열로 만들기. 2번째 스테이지.
+        },
+      },
+    },
+    {
+      $out: "user_ids_by_rating", //컬렉션 이름.
+    }, // out 어느 컬렉션 저장.
+  ]);
+  db.user_ids_by_rating.find();
+
+-> 컬렉션이 존재하면, 도큐먼트가 모두 지워지고,
+출력되는 도큐먼트를 작성하게 됨.
+없으면 새로 만듦.
+샤딩된 컬렉션, capped 컬렉션으로 지정 불가.
+
+-------------------------------------
+입력 도큐먼트 제어 스테이지 소개
+-> 페이징시 많이 사용되는 스테이지. 
+1) $limit
+입력 받은 도큐먼트 중 지정된 숫자만큼만 처음부터 출력함.
+형식
+{ $limit: <number> }
+
+2) $skip
+입력 받은 도큐먼트 중 지정된 숫자만큼 건너뛰고 출력함.
+형식
+{ $skip : <number>}
+
+3) $sort
+도큐먼트를 정렬한다. 1: 오름, -1: 내림
+형식
+{ $sort: { <field>: <1 or -1>,..}}
+
+ex)
+db.rating.aggregate([
+  {
+    $sort: {
+      user_id: -1,
+    },
+  }, // 3번째 정렬. 순서1
+  {
+    $limit: 5, // 순서2
+  },
+  {
+    $skip: 1, // 순서3
+  },
+
+])
+
+-> $sort 스테이지 주의할 점.
+처리하는 도큐먼트의 총 크기가 100메가를 넘을수 없다.
+만약 100 메가 이상의 용량을 가진 도큐먼트들을 정렬하고자 할 때,
+{ allowDiskUse: true}
+
+실습하기.
+2차 지방자치단체 올해 시도별 의회비 평균을 구해보기.
+만약, 구해진 의회비를 내림차순으로 정렬 가능하면 하기.
+!
+이 샘플 코드를 참고해서, 
+조건1 2차 지방자치단체(local)
+조건2 작년 시도별(city_or_province) 
+조건3 의회비 최대을 구해보기.
+조건4 내림차순.
+
+제출 
+https://github.com/lsy3709/MongoTest230824
+브랜치 
+homework
+폴더 
+homework -> 230828 -> 자기이름 파일이름 형식 (.mongodb.js)주의!!!!
+예) testlsy.mongodb.js
+
+
+//162
+  db.local.aggregate([
+    {
+        $match:
+          {sub_category: "의회비"}
+        },
+        {
+            $group : {
+                _id: "$city_or_province",
+                expense_avg: {
+                    $avg: "$this_term_expense"
+                }
+            }
+
+        },
+        { $sort: {
+          expense_avg: -1
+        }}
+
+  ])
+
+- 고급 스테이지 소개.
+
+1 $bucket
+도큐먼트를 범위에 따라 그룹화 
+
+
+
+2 $bucketAuto 
+도큐먼트를 자동적으로 범위에 따라 그룹화 
+
+
+3 $addFields 
+새로운 필드를 추가 
+
+
+4 $facet 
+각 필드에 대한 파이프라인을 수행해서 해당 필드에 
+파이프라인의 출력값을 배열의 형태로 저장. 
+
+
+5 $lookup 
+같은 디비에 있으면서, 샤딩되지 않은 외부 컬렉션에
+대해서 현재 필드와 외부 컬렉션의 필드가 일치하면 
+배열로 외부 컬렉션 도큐먼트를 가져옴. 
+
+
+6 $replaceRoot 
+주어진 도큐먼트를 newRoot 값으로 바꿈. 
+
+
+7 $sample 
+주어진 size 값 만큼 랜덤하게 도큐먼트를 가져옴. 
+
+
+8 $sortByCount 
+주어진 필드의 값이 같은 도큐먼트 끼리 그룹화 후, 
+도큐먼트의 숫자를 세어 표시하고,내림차순으로 정렬.
+$group 과 $sort 작업을 한것과 같은 의미. 
+
+
+---------------------------------
+
+
+1 $bucket
+도큐먼트를 범위에 따라 그룹화 
+
+$group 스테이지가 값으로 도큐먼트 묶음.
+$bucket 스테이지는 
+지정된 필드값의 범위에 따라 그룹화. 
+만약, 그룹화하려는 값이 정수값이면 -> $group
+실수값이면 범위로 묶는 -> $bucket 스테이지
+
+형식
+{
+  $bucket: {
+  // 타입: 문자열
+  // 정해진 해당 필드의 값에 따라 그룹화
+    groupBy: <expression>,
+  // 타입: 배열 
+  // 정해진  필드의 값의 범위를 정한다.
+	boundaries: [<lowerbound1>,
+	<lowerbound2>,...],
+  // 타입: 문자열 
+  // 옵션, 정한 구간 외의 도큐먼트를 모을 필드명 정하기.
+	default: <literal>,
+  // 타입 : document 
+  // 옵션, 그룹화를 하고 난 후 
+  // 출력 결과를 어떻게 표시할지 결정.
+	output: {
+	  <output1> : {<$연산식>},
+	  ...
+	  <outputN> : {<$연산식>},
+	}
+  
+  }
+}
+
+//p165 고급스테이지 bucket 
+//필드의 범위에 따라서 그룹화
+// group 필드 값으로 그룹화를 했음.
+db.rating.aggregate([
+  {
+    $bucket: {
+      groupBy: "$rating",
+      boundaries: [2, 3, 5],
+      default: "Others", // 범위 밖의 기본값 필드의 이름.
+      output: {
+        count: { $sum: 1 },
+        user_ids: { $push: "$user_id" }, // 배열로 나타내기.
+      },
+    },
+  },
+]);
+
+-> rating 필드를 기준으로 , 
+[2,3), [3,5) 두 구간으로 묶고, 
+그외 도큐먼트는 _id 값이 " Others" 
+
+주의사항,
+boundaries의 배열 요소 데이터 타입이 
+동일하도록 설정해주어야 함. 
+
+2 $bucketAuto 
+도큐먼트를 자동적으로 범위에 따라 그룹화 
+만약, 컬렉션 내의 도큐먼트들을 4등분해서 
+통계를 보여주길 바란다면 애플리케이션과 데이터베이스
+사이에 중간에 불필요한 쿼리가 생김. 
+그래서, 
+형식 
+{
+  $bucketAuto: {
+    groupBy: <expression>,
+	buckets: <number>,
+	output: {
+	  <output1> : {<$연산식> },
+	  ...
+	}
+	granularity: <string>
+  }
+}
+-> default(else 범위 밖에 값으로 사용됨.)
+ 필드 대신 , buckets 필드 대체.
+buckets
+필수적으소 설정해야하는 필드. 
+모든 도큐먼트를 몇개의 그룹으로 항목을 나눌지 설정 가능. 
+-> boundaries 필드 대신 , 
+granularity(수열 무시.) 생김. 
+옵션, 어떤 기준으로 분류할지 설정 가능. 
+참고만, 수열 부분임. 
+주의사항, 기준이 되는 값 전부 숫자이여야함. 
+예시)
+
+
+3 $addFields 
+새로운 필드를 추가 
+형식
+{
+  $addFields: {
+   <newField> : <expression>,...
+  }
+}
+
+예시1) 
+db.rating.aggregate([
+  {
+    $addFields : {
+	  hi: "world"
+	}
+  },
+  { $project: {hi:1}},
+  { $limit: 3}
+])
+
+예시2) 
+db.rating.aggregate([
+  {
+    $addFields : {
+	  "hi.hello": "world"
+	}
+  },
+  { $project: {hi:{hello:1}},
+  { $limit: 3}
+])
+
+4 $facet  -> 배열 : 나눠진 데이터, 하나의 자료 형태로 
+표기 할 때 사용함. 사용빈도가 높음. 
+예) 스프링 백에서 
+UserList<User>
+
+각 필드에 대한 파이프라인을 수행해서 해당 필드에 
+파이프라인의 출력값을 배열의 형태로 저장. 
+형식 
+{
+  $facet:
+  {
+    <outputField1>:[<stage1>,<stage2>,...],
+	<outputField2>:[<stage1>,<stage2>,...],
+	...
+  }
+}
+
+예시) 
+db.rating.aggregate([
+  {
+  // 배열로 만드는 연산자
+    $facet: {
+	// 임의 필드 이름을 정함.:categorizedByRating
+	  categorizedByRating : [
+	  // $group -> _id 값을 기준으로 그룹으로 나눈다.
+// 수동으로 나누었다면,	  
+	  { $group: {_id: "$rating",
+	  // $rating 별로 누적 갯수, 1씩 더한다.
+	  count: {$sum: 1}
+	  }}
+	  ],
+	  //categorizedById(Auto) 의 필드 : 임시 이름. 
+	  
+	  "categorizedById(Auto)":[
+	  // 자동으로 5등분.
+	    { $bucketAuto: {groupBy: 
+		"$_id", buckets:5} }
+		]
+	}
+  }
+])
+-> categorizedByRating 필드의 배열에
+rating에 따라 각각의 도큐먼트 수를 세는 스테이지
+, categorizedById(Auto) 필드의 배열에 
+_id에 따라 자동으로 5개 그룹으로 나누기 스테이지
+
+
+5 $lookup 
+조건1) 같은 디비에 있으면서, 
+조건2) 샤딩되지 않은 외부 컬렉션에
+대해서 현재 필드와 외부 컬렉션의 필드가 일치하면 
+배열로 외부 컬렉션 도큐먼트를 가져옴. 
+-> 서로다른 컬렉션의 정보를 합칠수 있게 도와주는 
+스테이지 , 조인과 비슷. 
+
+형식 
+{
+  $lookup:
+    {
+	// 타입: 문자열 
+	// 어떤 도큐먼트를 조인할지 정함.
+	// 조인을 할 대상 컬렉션
+	  from: <collection to join>,
+	  // 타입 : 문자열 
+	  // 넘겨받은 도큐먼트의 어떤 필드를 
+	  //from에서 정한 도큐먼트의 필드와 
+	  // 매칭할지 정함. 
+	  // 현재, 컬렉션의 로컬 필드,(외래키)
+	  localField : <field from the input documents>,
+	  // 타입 : 문자열 
+	  //from에서 선택한 도큐먼트에서 
+	  // 어떤 필드를 localField에서 정한 필드와 
+	  // 매칭할지 정함. 
+	  // 외부 컬렉션에서, 동일한 필드로 가져올 대상값.
+	  foreignField: < field from the documents of the " from "
+	  collection>,
+	   // 타입 : 문자열 
+	  //from에서 정한 도큐먼트로부터
+	  // 매칭되어 가져온 데이터를 여기서 정한 
+	  // 필드의 배열 안에 넣는다.. 
+	  as: <output array field>
+}
+
+예시, 
+car_accident 
+area 컬렉션 , _id 와 
+by_month 컬렉션 비교 . 
+-> 각 지역별 인구정보를 by_month 컬렉션과 함께 묶기. 
+
+// 현재 컬렉션 :by_month
+db.by_month.aggregate([
+  {
+    $lookup:
+	  {
+	  // 조인할 대상: area 컬렉션 
+	    from:"area",
+	  // 현재 컬렉션: 	by_month 의 필드. 
+		localField:"area_id",
+	  // 조인할 대상 : area 컬렉션 의 필드. 	
+		foreignField: "_id",
+	  // 현재 로컬 필드와, 외부 외래 필드가 값은 동일함.
+	  // 변수명: area_data 로 하겠다. 
+	  // 임의의 이름. 
+		as : "area_data"
+		}
+	},
+	{$limit: 1}
+])
+
+어려운 버전,
+형식 
+{
+  $lookup:
+  { 
+    from: <collection to join>,
+	// 추가1
+	// 타입 : document
+	// 옵션
+	// pipeline 파라미터에 현재 넘겨 받은 
+	// 도큐먼트의 값을 비교 대조해야 할 필요성시.
+	//  pipeline 파라미터에 현재 도큐먼트 값을 
+	// 넘길수 있도록 변수를 선언해줌.
+	let: {<var_1>:<expression>,..,
+	<var_n> : <expression> },
+	// 추가2. 
+	// 타입: 배열 
+	// from 에서 설정한 컬렉션을 해당 파이프라인에 
+	// 통과시킨뒤 출력되는 도큐먼트들을 as에서 
+	// 정한 필드에 배열 요소로 연결함. 
+	pipeline : [<pipeline to excute
+	on the collection to join>],
+	as: <output array field>
+}
+
+예시 )
+db.orders.aggregate([
+  {
+   $lookup:
+    {
+	 from:"warehouses",
+	 // 이부분의 order_item
+	 // 이부분의 order_qty
+	 let:{order_item: "$item",
+	 order_qty: "$ordered"},
+	 // pipeline 파라미터에 있는 파이프라인
+	 // 스테이지들은 warehouses 컬렉션에서 
+	 // 주어진 조건에 맞는 도큐먼트만 남기게 만듦. 
+	 pipeline: [
+	  { $match:
+	   { $ezpr:
+	    { $and:
+		 [ 
+		 // 사용함. 
+		 // $$order_item
+		 // $$order_qty
+		  { $eq: ["$stock_item",
+		  "$$order_item"]},
+		  { $gte: ["$instock",
+		  "$$order_qty"]}
+		  ]
+		}
+	   }
+	 },
+	{ $project: { stock_item:0, _id:0}}
+	 ],
+	 // stockdata 필드의 배열에 결과를 출력
+	 as: "stockdata"
+	 }
+	 }
+])
+
+
+
+6 $replaceRoot 
+주어진 도큐먼트를 newRoot 값으로 바꿈. 
+도큐먼트 모양을 바꾸는 스테이지. 
+형식 
+{
+  $replaceRoot: {newRoot:<replacementDocument>}
+}
+-> 서브 도큐먼트를 도큐먼트 전체의 내용으로 바꾸려고 할 때 
+특히 유용. 
+예시)
+db.by_month.aggregate([
+  {
+   $addFields: {
+    "month_data.city_or_province":
+	"$city_or_province",
+	"month_data.county":"$county"
+	}
+	},
+  {
+   $replaceRoot: { newRoot: {
+    $arrayElemAt: ["$month_data",0]
+	} }
+	}
+])
+
+7 $sample 
+주어진 size 값 만큼 랜덤하게 도큐먼트를 가져옴. 
+형식 
+{
+  $sample: { size: <positive integer>}
+}
+-> 일반적인 상황에서 랜덤 정렬을 한 후 
+도큐먼트를 뽑기 때문에 
+$sort 스테이지와 마찬가지로 
+allowDiskUsage 옵션이 true 가 아니면, 
+100MB 이상의 도큐먼트를 처리 못함. 
+
+예시 
+db.rating.aggregate([
+  {
+    $sample: { size: 3}
+	}
+])
+
+
+8 $sortByCount 
+1)주어진 필드의 값이 같은 도큐먼트 끼리 그룹화 후, 
+2)도큐먼트의 숫자를 세어 표시하고,
+3)내림차순으로 정렬.
+$group 과 $sort 작업을 한것과 같은 의미. 
+
+형식 
+{
+ $sortByCount : <expression>
+}
+
+예시
+db.rating.aggregate([
+  {
+   $sortByCount: "$rating"
+  }
+])
+
+실습하기. 
+
+1. 하
+1차 자치단체(city_or_province) 컬렉션에서 
+facet 스테이지를 이용하여 
+조건1
+자치단체별(city_or_province)로 
+총 사용한 운영비를 구하고, 
+조건2
+세부항목별(sub_category)로
+총 사용한 운영비를 구해서 
+하나의 도큐먼트로 표시하기. 
+-> facet 스테이지 내부에서 
+group 스테이지를 이용하여 
+city_or_province와 sub_category로 
+묶기. 
+
+->
+db.city_or_province.aggregate([
+ {
+  $facet: {
+   by_city_or_province: [
+    {
+	 $group: {
+	  _id: "$city_or_province",
+	  sum_expenses: {$sum: "$this_term_expense"}
+	  }
+	 }
+	],
+	by_sub_category: [
+	 {
+	  $group: {
+	   _id: "$sub_category",
+	   main_category: {$first: "$main_category"},
+	   sum_expenses: {$sum: "$this_term_expense"},
+	   }
+	  }
+	 ]
+	}
+}
+])
+
+
+
+2. 중 
+1차 자치단체를 랜덤하게 두 곳을 골라 올해 
+가장 많이 사용한 운영비 세부항목을 표시하기. 
+->
+1) city_or_province 컬렉션의 도큐먼트를 
+올해 운영비 내림차순으로 정렬. 
+2) 지역명으로 그룹화 하면서 첫 번째 도큐먼트 정보 남김. 
+3) 2개의 도큐먼트를 랜덤하게 뽑기. 
+->
+db.city_or_province.aggregate([
+ {
+  $sort: {this_term_expense:-1}
+  },
+  {
+   $group: {
+    _id: "$city_or_province",
+	main_category: {$first: "$main_category"},
+	sub_category: {$first: "$sub_category"},
+	this_term_expense: {$first: "$this_term_expense"}
+	}
+  },
+  {
+   $sample: {
+    size : 2
+   }
+  }
+])
+
+
+
+
+
+3. 최상 
+-전국 2차 자치단체의 이름, 총 예산, 주민등록 
+인구를 하나의 도큐먼트로 정리해서 출력하기. 
+- 2차 자치단체 이름이ㅣ 두번 이상 쓰인 곳은 
+제외하고 출력해야함. 
+- 임베디드 구조가 없는 형식으로 출력해야 함. 
+
+-> unwind 와 addFields로 인구 정보와 예산정보를 합치는 방법 
+
+1) local 컬렉션을 2차 자치단체명으로 그룹화 
+2) population 컬렉션 과 2차 자치단체명으로 조인한다. 
+3) 2차 자치단체명이 중복되는 지역을 제외한다. 
+4) 조인된 배열 속 임베디드 도큐먼트에 예산 정보를 추가한다. 
+5) replaceRoot 스테이지로 임베디드 도큐먼트를 도큐먼트 자체로 
+변경하기. 
+
+->
+db.local.aggregate([
+ {
+  $group: {
+   _id: "$local_government",
+   expense: {$sum : "$this_term_expense"}
+   }
+   },
+  {
+   $lookup: {
+    from: "population",
+	localField: "_id",
+	foreignField: "local_government",
+	as: "population_data"
+	}
+	}
+	,
+   {
+    $match: {population_data: {$size:1}}
+   },
+   {
+    $unwind: "$population_data"
+   },
+   {
+    $addFields: {
+	 "population_data.expense": "$expense"
+	}
+   }
+   ,
+   {
+    $replaceRoot : {
+	 newRoot: "$population_data"
+	}
+   }
+   
+])
+
+-----------------------------------------
+집계 파이프라인 연산자 
+- 문자열 연산자
+
+
+- 산술 연산자 
+
+
+- 날짜, 시간 연산자 
+
+
+- 논리 연산자 
+
+
+- 비교 연산자 
+
+
+- 배열 연산자 
+
+-----------------------------------------
+쿼리 속 파이프라인 연산자 
+
+실습하기. 
+1 최상 
+2 최상 
+
+
+  
+
+
+
