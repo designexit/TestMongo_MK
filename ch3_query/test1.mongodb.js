@@ -137,8 +137,10 @@ db.collection.find({}, {tags: {$slice: [2, 3]}});
 
 //특정 조건에 부합하는 필드만 출력하라
 db.inventory.find({}, {$elemMatch: {$regex: /^b/}}); //에러남
-db.inventory.find({ tags: { $regex: /^b/ } });
-db.inventory.find({ tags: { $elemMatch: { $regex: /^b/ } } });
+db.inventory.find(
+  {},
+  { tags: { $elemMatch: { $regex: /^b/ } }, _id: 0, item: 0, qty: 0 }
+);
 
 //특정 조건에 부합하는 첫번째 데이터만 출력하라
-//db.inventory.find({tags: “red”}, {“tags.$:true})
+db.inventory.find({ tags: "red" }, { "tags.$": true });
